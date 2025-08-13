@@ -23,30 +23,40 @@ model = AutoModelForCausalLM.from_pretrained(MODEL_ID).to("cpu")  # adjust devic
 # -----------------------------
 def extract_intent(user_message: str) -> dict:
     """
-    Returns a dict with structured intent.
-    Example: {"query": "pizza", "features": ["parking"], "min_rating": 4.0}
+    Extract structured intent from a user message (Portuguese).
+    Returns a dict with keys:
+    - query (string or None)
+    - features (list of strings)
+    - min_rating (float)
+    - max_distance_km (float or None)
+    - lat (float or None)
+    - lon (float or None)
     """
+    
     prompt = f"""
-You are an assistant that extracts search parameters for a restaurant recommendation system.
-User said: "{user_message}"
+Você é um assistente que extrai parâmetros de busca para um sistema de recomendação de restaurantes.
+Usuário disse: "{user_message}"
 
-Return a **valid JSON object only**, with the following keys:
-- query (string or null)
-- features (list of strings)
+Retorne um **objeto JSON válido somente**, com as seguintes chaves:
+- query (string ou null)
+- features (lista de strings)
 - min_rating (float)
-- max_distance_km (float or null)
-- lat (float or null)
-- lon (float or null)
+- max_distance_km (float ou null)
+- lat (float ou null)
+- lon (float ou null)
 
-The JSON must be parsable by Python's json.loads().
-Do not include any extra text.
+O JSON deve ser analisável com Python json.loads().
+Não inclua texto extra.
 
-Examples:
-User: "I want pizza with parking nearby"
-JSON: {{"query": "pizza", "features": ["parking"], "min_rating": 0, "max_distance_km": null, "lat": null, "lon": null}}
+Exemplos:
+Usuário: "Quero comer pizza com estacionamento"
+JSON: {{"query": "pizza", "features": ["estacionamento"], "min_rating": 0, "max_distance_km": null, "lat": null, "lon": null}}
 
-User: "Looking for sushi and a romantic place"
-JSON: {{"query": "sushi", "features": ["romantic"], "min_rating": 0, "max_distance_km": null, "lat": null, "lon": null}}
+Usuário: "Procurando sushi e um lugar romântico"
+JSON: {{"query": "sushi", "features": ["romântico"], "min_rating": 0, "max_distance_km": null, "lat": null, "lon": null}}
+
+Usuário: "Quero hambúrguer barato perto de mim"
+JSON: {{"query": "hambúrguer", "features": ["barato"], "min_rating": 0, "max_distance_km": null, "lat": null, "lon": null}}
 """
 
     # Tokenize and generate
@@ -56,13 +66,11 @@ JSON: {{"query": "sushi", "features": ["romantic"], "min_rating": 0, "max_distan
 
     text = tokenizer.decode(outputs[0], skip_special_tokens=True)
 
-    # Try to extract first JSON object
     import json, re
     try:
         json_text = re.search(r"\{.*\}", text, re.DOTALL).group()
         intent = json.loads(json_text)
     except:
-        # fallback defaults
         intent = {
             "query": None,
             "features": [],
@@ -71,6 +79,21 @@ JSON: {{"query": "sushi", "features": ["romantic"], "min_rating": 0, "max_distan
             "lat": None,
             "lon": None
         }
+
+    if intent["query"] is None:
+        keywords = {
+            "pizza": ["pizza", "pizzaria"],
+            "sushi": ["sushi", "sushibar"],
+            "hambúrguer": ["hambúrguer", "burger", "hamburguer"],
+            "churrasco": ["churrasco", "churrascaria"],
+        }
+        for key, kw_list in keywords.items():
+            for kw in kw_list:
+                if re.search(kw, user_message, re.IGNORECASE):
+                    intent["query"] = key
+                    break
+            if intent["query"]:
+                break
 
     return intent
 
