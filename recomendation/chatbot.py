@@ -152,28 +152,3 @@ def chat(msg: ChatMessage):
         "intent": intent,
         "recommendations": restaurants
     }
-
-test = "Quero comer pizza"
-print(test)
-print(extract_intent(test))
-print()
-
-test = "Quero comer pizza, mas preciso que tenha cadeirinha de bebe"
-print(test)
-print(extract_intent(test))
-print()
-
-test = "Hoje estou doido por um sushi, mas preciso de um lugar pra estacionar e pagar com cartão visa"
-print(test)
-print(extract_intent(test))
-print()
-
-test = "Preciso encher a cara! Mas que seja um lugar barato por favor"
-print(test)
-print(extract_intent(test))
-print()
-
-test = "Estou afim de comer carne, mas tem que ser um lugar top!"
-print(test)
-print(extract_intent(test))
-print()
