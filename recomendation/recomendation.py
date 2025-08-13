@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, HTTPException
 from typing import List, Optional
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -9,14 +9,31 @@ from pydantic import BaseModel
 
 app = FastAPI()
 
-host = "170.78.97.36"
-port = 5400
-dbname = "checkin"
-user = "MF_admin"
-password = "proj_proj"
+# Database configuration via environment variables (with safe defaults)
+host = os.getenv("DB_HOST", "170.78.97.36")
+port = int(os.getenv("DB_PORT", "5400"))
+dbname = os.getenv("DB_NAME", "checkin")
+user = os.getenv("DB_USER", "MF_admin")
+password = os.getenv("DB_PASSWORD", "proj_proj")
 
 conn_str = f"dbname={dbname} user={user} password={password} host={host} port={port}"
-conn = psycopg2.connect(conn_str)
+conn = None
+
+def get_db_connection():
+    """Create or reuse a database connection. Return None if unavailable."""
+    global conn
+    if conn is None or getattr(conn, "closed", 1) != 0:
+        try:
+            conn = psycopg2.connect(conn_str)
+        except Exception as e:
+            print(f"[DB] connection failed: {e}")
+            conn = None
+    return conn
+
+@app.on_event("startup")
+def try_connect_on_startup():
+    # Best-effort connect to avoid failing app startup if DB is down
+    get_db_connection()
 
 # DB_URL = os.getenv("0.0.0.0:5432", "dbname=postgres user=postgres password=mysecretpassword host=localhost")
 # conn = psycopg2.connect(DB_URL)
@@ -68,7 +85,12 @@ def search_restaurants(
     sql += " ORDER BY rating DESC, total_reviews DESC LIMIT %s"
     params.append(limit)
 
-    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+    connection = get_db_connection()
+    if connection is None:
+        # DB down: return empty list gracefully (or raise 503 if preferred)
+        return []
+
+    with connection.cursor(cursor_factory=RealDictCursor) as cur:
         cur.execute(sql, params)
         results = cur.fetchall()
 

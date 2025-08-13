@@ -4,6 +4,7 @@ from typing import Optional, List, Dict
 import requests
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
+import os
 
 # -----------------------------
 # Initialize FastAPI
@@ -13,10 +14,30 @@ app = FastAPI(title="Chatbot + Recommendations")
 # -----------------------------
 # Gemma Model Setup
 # -----------------------------
-MODEL_ID = "google/gemma-3-1b-it"  # or your verified checkpoint
+MODEL_ID = os.getenv("CHATBOT_MODEL_ID", "google/gemma-3-1b-it")
 
-tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
-model = AutoModelForCausalLM.from_pretrained(MODEL_ID).to("cpu")  # adjust device if GPU available
+tokenizer = None
+model = None
+
+def ensure_model_loaded():
+    global tokenizer, model
+    if tokenizer is None:
+        print(f"[Chatbot] Loading tokenizer for {MODEL_ID}...")
+        try:
+            tok = AutoTokenizer.from_pretrained(MODEL_ID)
+        except Exception as e:
+            print(f"[Chatbot] Fast tokenizer failed, falling back to slow tokenizer: {e}")
+            # Force re-download on fallback to avoid corrupted cache reuse
+            try:
+                tok = AutoTokenizer.from_pretrained(MODEL_ID, use_fast=False)
+            except Exception as e2:
+                print(f"[Chatbot] Slow tokenizer also failed: {e2}")
+                raise
+        tokenizer = tok
+    if model is None:
+        print(f"[Chatbot] Loading model weights for {MODEL_ID}...")
+        mdl = AutoModelForCausalLM.from_pretrained(MODEL_ID).to("cpu")
+        model = mdl
 
 # -----------------------------
 # Helper: Extract intent from user message
@@ -71,6 +92,7 @@ def extract_intent(user_message: str) -> dict:
     """
 
     # Tokenize and generate
+    ensure_model_loaded()
     inputs = tokenizer(prompt, return_tensors="pt")
     with torch.inference_mode():
         outputs = model.generate(**inputs, max_new_tokens=128)
@@ -139,7 +161,7 @@ def chat(msg: ChatMessage):
     intent = extract_intent(msg.message)
 
     # 2️⃣ Call recommendations API
-    rec_api_url = "http://127.0.0.1:8000/recommendations"  # adjust if hosted elsewhere
+    rec_api_url = os.getenv("RECOMMENDATION_URL", "http://127.0.0.1:8001/recommendations")
     try:
         resp = requests.post(rec_api_url, json=intent, timeout=5)
         restaurants = resp.json()
@@ -152,3 +174,12 @@ def chat(msg: ChatMessage):
         "intent": intent,
         "recommendations": restaurants
     }
+
+# Health endpoints
+@app.get("/")
+def root():
+    return {"status": "ok"}
+
+@app.get("/healthz")
+def healthz():
+    return {"status": "ok"}
