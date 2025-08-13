@@ -1,94 +1,105 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Query
 from pydantic import BaseModel
-from typing import List, Optional, Dict
+from typing import Optional, List, Dict
 import requests
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
-app = FastAPI()
+# -----------------------------
+# Initialize FastAPI
+# -----------------------------
+app = FastAPI(title="Chatbot + Recommendations")
 
-# --- Config ---
-RECOMMENDATION_API_URL = "http://localhost:8000/recommendations"
-USE_LOCAL_GEMMA = True  # Set False to call Gemma API instead
+# -----------------------------
+# Gemma Model Setup
+# -----------------------------
+MODEL_ID = "google/gemma-3-1b-it"  # or your verified checkpoint
 
-# --- In-memory simple context storage (user_id -> conversation history) ---
-conversation_contexts: Dict[str, List[str]] = {}
+tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
+model = AutoModelForCausalLM.from_pretrained(MODEL_ID).to("cpu")  # adjust device if GPU available
 
-# --- Gemma local model init (if using local) ---
-if USE_LOCAL_GEMMA:
-    tokenizer = AutoTokenizer.from_pretrained("gpt2-medium")
-    model = AutoModelForCausalLM.from_pretrained("gpt2-medium").to("cpu")
+# -----------------------------
+# Helper: Extract intent from user message
+# -----------------------------
+def extract_intent(user_message: str) -> dict:
+    """
+    Returns a dict with structured intent.
+    Example: {"query": "pizza", "features": ["parking"], "min_rating": 4.0}
+    """
+    prompt = f"""
+You are an assistant that extracts search parameters for a restaurant recommendation system.
+User said: "{user_message}"
 
-# --- Helper functions ---
-def generate_gemma_reply(prompt: str) -> str:
-    if USE_LOCAL_GEMMA:
-        inputs = tokenizer(prompt, return_tensors="pt").to("cpu")
-        outputs = model.generate(**inputs, max_length=100, do_sample=True, top_p=0.9)
-        reply = tokenizer.decode(outputs[0], skip_special_tokens=True)
-        return reply
-    else:
-        # Call external Gemma API
-        response = requests.post("http://gemma-api-host/generate", json={"prompt": prompt, "max_tokens": 100})
-        return response.json().get("text", "Sorry, I didn't understand that.")
+Return a **valid JSON object only**, with the following keys:
+- query (string or null)
+- features (list of strings)
+- min_rating (float)
+- max_distance_km (float or null)
+- lat (float or null)
+- lon (float or null)
 
-def simple_intent_and_entity_parse(message: str):
-    # Very naive intent detection and entity extraction
-    msg = message.lower()
-    intent = "chat"
-    entities = {}
+The JSON must be parsable by Python's json.loads().
+Do not include any extra text.
 
-    if any(x in msg for x in ["restaurant", "eat", "food", "pizza", "sushi", "cafe"]):
-        intent = "recommendation"
-        if "pizza" in msg:
-            entities["query"] = "pizza"
-        if "parking" in msg:
-            entities.setdefault("features", []).append("parking")
-        if "wifi" in msg:
-            entities.setdefault("features", []).append("wifi")
-        # Could expand with more parsing here
+Examples:
+User: "I want pizza with parking nearby"
+JSON: {{"query": "pizza", "features": ["parking"], "min_rating": 0, "max_distance_km": null, "lat": null, "lon": null}}
 
-    return intent, entities
+User: "Looking for sushi and a romantic place"
+JSON: {{"query": "sushi", "features": ["romantic"], "min_rating": 0, "max_distance_km": null, "lat": null, "lon": null}}
+"""
 
-# --- Request / Response models ---
-class ChatRequest(BaseModel):
-    user_id: str
-    message: str
+    # Tokenize and generate
+    inputs = tokenizer(prompt, return_tensors="pt")
+    with torch.inference_mode():
+        outputs = model.generate(**inputs, max_new_tokens=128)
 
-class ChatResponse(BaseModel):
-    reply: str
+    text = tokenizer.decode(outputs[0], skip_special_tokens=True)
 
-# --- Chat endpoint ---
-@app.post("/chat", response_model=ChatResponse)
-def chat(req: ChatRequest):
-    # Update conversation context (optional)
-    ctx = conversation_contexts.setdefault(req.user_id, [])
-    ctx.append(f"User: {req.message}")
-
-    intent, entities = simple_intent_and_entity_parse(req.message)
-
-    if intent == "recommendation":
-        rec_payload = {
-            "query": entities.get("query"),
-            "features": entities.get("features"),
-            "min_rating": 3.5,
-            "limit": 5,
+    # Try to extract first JSON object
+    import json, re
+    try:
+        json_text = re.search(r"\{.*\}", text, re.DOTALL).group()
+        intent = json.loads(json_text)
+    except:
+        # fallback defaults
+        intent = {
+            "query": None,
+            "features": [],
+            "min_rating": 0,
+            "max_distance_km": None,
+            "lat": None,
+            "lon": None
         }
-        rec_response = requests.post(RECOMMENDATION_API_URL, json=rec_payload)
-        recs = rec_response.json()
 
-        if recs:
-            reply = "I found some places you might like:\n"
-            for r in recs:
-                reply += f"- {r['name']} (Rating: {r['rating']}, Features: {r.get('features','N/A')})\n"
-        else:
-            reply = "Sorry, I couldn't find any matching places."
+    return intent
 
-    else:
-        # Use Gemma for chat responses
-        prompt = " ".join(ctx[-6:]) + f"\nAI:"
-        reply = generate_gemma_reply(prompt)
+# -----------------------------
+# Pydantic model for chat input
+# -----------------------------
+class ChatMessage(BaseModel):
+    message: str
+    user_id: Optional[int] = None
 
-    # Append AI reply to context
-    ctx.append(f"AI: {reply}")
+# -----------------------------
+# Chat endpoint
+# -----------------------------
+@app.post("/chat")
+def chat(msg: ChatMessage):
+    # 1️⃣ Extract intent via Gemma
+    intent = extract_intent(msg.message)
 
-    return ChatResponse(reply=reply)
+    # 2️⃣ Call recommendations API
+    rec_api_url = "http://127.0.0.1:8000/recommendations"  # adjust if hosted elsewhere
+    try:
+        resp = requests.post(rec_api_url, json=intent, timeout=5)
+        restaurants = resp.json()
+    except Exception as e:
+        restaurants = []
+    
+    # 3️⃣ Return structured response
+    return {
+        "user_message": msg.message,
+        "intent": intent,
+        "recommendations": restaurants
+    }
