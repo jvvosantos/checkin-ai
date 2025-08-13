@@ -46,6 +46,13 @@ def extract_intent(user_message: str) -> dict:
     O JSON deve ser analisável com Python json.loads().
     Não inclua texto extra.
 
+    Regras importantes:
+    1. Se o usuário mencionar 'carne', 'bife', 'churrasco' → query = "churrasco".
+    2. Se o usuário mencionar 'pizza', 'pizzaria' → query = "pizza".
+    3. Se o usuário mencionar 'sushi', 'sushibar' → query = "sushi".
+    4. Se o usuário mencionar 'barato', 'cheap', 'affordable' → adicione 'barato' a features, min_rating = 0.5.
+    5. Se o usuário mencionar 'top', 'excelente', 'ótimo' → min_rating = 4.
+
     Exemplos:
     Usuário: "Quero comer pizza"
     JSON: {{"query": "pizza", "features": [], "min_rating": 0}}
@@ -61,9 +68,6 @@ def extract_intent(user_message: str) -> dict:
 
     Usuário: "Estou afim de comer carne, mas tem que ser um lugar top!"
     JSON: {{"query": "churrasco", "features": [], "min_rating": 4}}
-
-    Usuário: "Procurando um sushi romântico para jantar"
-    JSON: {{"query": "sushi", "features": ["romântico"], "min_rating": 0}}
     """
 
     # Tokenize and generate
@@ -72,6 +76,7 @@ def extract_intent(user_message: str) -> dict:
         outputs = model.generate(**inputs, max_new_tokens=128)
 
     text = tokenizer.decode(outputs[0], skip_special_tokens=True)
+    print(text)
 
     # 1️⃣ Try to extract JSON from model output
     try:

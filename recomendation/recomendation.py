@@ -9,9 +9,17 @@ from pydantic import BaseModel
 
 app = FastAPI()
 
+host = "170.78.97.36"
+port = 5400
+dbname = "checkin"
+user = "MF_admin"
+password = "proj_proj"
 
-DB_URL = os.getenv("0.0.0.0:5432", "dbname=postgres user=postgres password=mysecretpassword host=localhost")
-conn = psycopg2.connect(DB_URL)
+conn_str = f"dbname={dbname} user={user} password={password} host={host} port={port}"
+conn = psycopg2.connect(conn_str)
+
+# DB_URL = os.getenv("0.0.0.0:5432", "dbname=postgres user=postgres password=mysecretpassword host=localhost")
+# conn = psycopg2.connect(DB_URL)
 
 def haversine(lat1, lon1, lat2, lon2):
     R = 6371
@@ -34,8 +42,8 @@ def search_restaurants(
 ):
     print(query)
     sql = """
-    SELECT id, name, description, cuisinePrimary, cuisineSecondary, address_full, rating, reviewCount, priceRange, features, latitude, longitude
-    FROM venue
+    SELECT id, name, description, category, address, rating, total_reviews, price_range, features, latitude, longitude
+    FROM venues
     WHERE rating >= %s
     """
     params = [min_rating]
@@ -46,11 +54,10 @@ def search_restaurants(
               name ILIKE %s OR
               features ILIKE %s OR
               description ILIKE %s OR
-              cuisinePrimary ILIKE %s OR
-              cuisineSecondary ILIKE %s
+              category ILIKE %s
           )
         """
-        for _ in range(5):
+        for _ in range(4):
             params.append(f"%{query}%")
 
     if features:
@@ -58,7 +65,7 @@ def search_restaurants(
             sql += " AND features ILIKE %s"
             params.append(f"%{f}%")
 
-    sql += " ORDER BY rating DESC, reviewCount DESC LIMIT %s"
+    sql += " ORDER BY rating DESC, total_reviews DESC LIMIT %s"
     params.append(limit)
 
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
